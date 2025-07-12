@@ -1,0 +1,900 @@
+---
+title: "Trabalho de Sobrevivência"
+author: "João Pedro Almeida Santos"
+format: html
+editor: visual
+---
+
+## Pacotes
+
+```{r}
+pacman::p_load("haven", "survival", "AdequacyModel", "classInt", "survminer", "ggplot2", "ggsci", "patchwork", "gridExtra", "RColorBrewer", "eha", "flexsurvcure")
+```
+
+## Leitura dos dados
+
+```{r}
+dados <- read_sas("whas500.sas7bdat")
+```
+
+```{r}
+str(dados)
+```
+
+```{r}
+summary(dados)
+```
+
+# Análise exploratória
+
+## Apenas da variável resposta
+
+```{r}
+# Estimativa de sobrevivência sem covariáveis
+fit1 <- survfit(Surv(LENFOL, FSTAT) ~ 1, data = dados %>% filter(YEAR == 1))
+
+p1 <- ggsurvplot(
+    fit1,
+    data = dados %>% filter(YEAR == 1),
+    conf.int = T, # Intervalo de confiança
+    risk.table = F, # Tabela de "n em risco"
+    palette = "steelblue", # Cor elegante
+    ggtheme = theme_minimal(), # Tema leve e clean
+    title = "Curva de Sobrevivência Global",
+    xlab = "Tempo (dias)",
+    ylab = expression("S(t)"),
+    censor = TRUE,
+    legend = "none",
+)
+
+fit2 <- survfit(Surv(LENFOL, FSTAT) ~ 1, data = dados %>% filter(YEAR == 2))
+
+p2 <- ggsurvplot(
+    fit2,
+    data = dados %>% filter(YEAR == 2),
+    conf.int = T, # Intervalo de confiança
+    risk.table = F, # Tabela de "n em risco"
+    palette = "steelblue", # Cor elegante
+    ggtheme = theme_minimal(), # Tema leve e clean
+    title = "Curva de Sobrevivência Global",
+    xlab = "Tempo (dias)",
+    ylab = expression("S(t)"),
+    censor = TRUE,
+    legend = "none",
+)
+
+fit3 <- survfit(Surv(LENFOL, FSTAT) ~ 1, data = dados %>% filter(YEAR == 3))
+
+p3 <- ggsurvplot(
+    fit3,
+    data = dados %>% filter(YEAR == 3),
+    conf.int = T, # Intervalo de confiança
+    risk.table = F, # Tabela de "n em risco"
+    palette = "steelblue", # Cor elegante
+    ggtheme = theme_minimal(), # Tema leve e clean
+    title = "Curva de Sobrevivência Global",
+    xlab = "Tempo (dias)",
+    ylab = expression("S(t)"),
+    censor = TRUE,
+    legend = "none",
+)
+
+(p1$plot + p2$plot + p3$plot)
+```
+
+```{r}
+tempo = dados$LENFOL
+censura = dados$FSTAT
+```
+
+## Verifica indivíduos em risco ao longo do tempo e censura ao longo do tempo
+```{r}
+plot(fit$time,fit$n.risk)
+```
+
+
+```{r}
+plot(fit$time,fit$n.censor)
+```
+
+```{r}
+fit$n.risk
+```
+
+
+```{r}
+ggsave("plots/km_geral.png", width = 158, height = 93, units = "mm")
+```
+
+```{r}
+pdf("plots/ttt_geral.pdf", width = 7, height = 5)
+TTT(dados$LENFOL, col = "red", lwd = 2.5, grid = TRUE, lty = 2)
+dev.off()
+```
+
+```{r}
+TTT(dados$LENFOL, col = "red", lwd = 2.5, grid = TRUE, lty = 2)
+```
+
+
+```{r}
+ggsave("plots/ttt_geral.pdf", width = 158, height = 93, units = "mm")
+```
+
+
+
+```{r}
+# Estimativa de sobrevivência sem covariáveis
+fit <- survfit(Surv(LENFOL, FSTAT) ~ 1, data = dados %>% filter(FSTAT == 1))
+
+ggsurvplot(
+    fit,
+    data = dados,
+    conf.int = F, # Intervalo de confiança
+    risk.table = F, # Tabela de "n em risco"
+    palette = "steelblue", # Cor elegante
+    ggtheme = theme_minimal(), # Tema leve e clean
+    title = "Curva de Sobrevivência Global",
+    xlab = "Tempo (dias)",
+    ylab = expression("S(t)"),
+    censor = TRUE,
+    legend = "none"
+)
+```
+
+```{r}
+ggsave("plots/km_geral_censura.pdf", width = 158, height = 93, units = "mm")
+```
+
+```{r}
+pdf("plots/ttt_s_censura.pdf", width = 7, height = 5)
+TTT(dados$LENFOL[dados$FSTAT == 1], col = "red", lwd = 2.5, grid = TRUE, lty = 2)
+dev.off()
+```
+
+
+
+## Com covariáveis
+
+### Função geral:
+
+```{r}
+surv_exploratoria <- function(df, variavel, tipo = c("numerica", "categorica"),
+                              metodo_discretizacao = "jenks", n_classes = 4,
+                              tempo = "LENFOL", censura = "FSTAT") {
+  
+  tipo <- match.arg(tipo)
+  v <- df[[variavel]]
+  
+  if (tipo == "numerica") {
+    breaks <- classIntervals(v, n = n_classes, style = metodo_discretizacao, intervalClosure = "left")$brks
+    df$grupo <- cut(v, breaks = breaks, include.lowest = TRUE)
+    cat("Intervalos criados:\n")
+    print(breaks)
+  } else {
+    df$grupo <- as.factor(v)
+    cat("Frequências e proporções:\n")
+    freq <- table(df$grupo)
+    print(cbind(Freq = freq, Prop = round(prop.table(freq), 3)))
+  }
+  
+  levels(df$grupo) <- gsub("^.*?:\\s*", "", levels(df$grupo))
+  
+  # Distribuição univariada da variável explicativa
+  tab <- as.data.frame(table(df$grupo))
+  colnames(tab) <- c("Grupo", "Frequência")
+  tab$Proporção <- tab$Frequência / sum(tab$Frequência)
+  
+  p_dist <- ggplot(tab, aes(x = Grupo, y = Frequência, fill = Grupo)) +
+    geom_bar(stat = "identity", color = "black", alpha = 0.9) +
+    geom_text(aes(label = scales::percent(Proporção, accuracy = 0.1)), 
+              vjust = -0.4, size = 4.5) +
+    scale_fill_npg() +
+    labs(title = paste("Distribuição de", variavel),
+         y = "Frequência Absoluta", x = variavel, fill = NULL) +
+    theme_minimal(base_size = 10) +
+    theme(legend.position = "none") +
+    ylim(0,max(tab$Frequência)*1.1)
+  
+  # Boxplot com ggplot2
+  p_box <- ggplot(df, aes(x = grupo, y = .data[[tempo]])) +
+    geom_boxplot(fill = "steelblue", alpha = 0.7, outlier.color = "black") +
+    labs(title = paste("Boxplot do tempo por", variavel),
+         x = variavel, y = "Tempo") +
+    theme_minimal(base_size = 10)
+
+  print((p_dist + p_box))
+  
+  ggsave(paste0("plots/dist",variavel,".pdf"),width = 158, height = 93, units = "mm")
+
+  # Curvas de sobrevivência com p-valor no gráfico
+  kms <- survfit(as.formula(paste0("Surv(", tempo, ",", censura, ") ~ grupo")), data = df)
+  
+  names(kms$strata) <- gsub("^grupo=", "", names(kms$strata))
+
+  p_surv <- ggsurvplot(
+    kms,
+    conf.int = F,
+    pval = F,
+    risk.table = F,
+    legend.title = variavel,
+    palette = "npg",
+    xlab = "Tempo",
+    ylab = expression("S(t)"),
+    ggtheme = theme_minimal(base_size = 10),
+    title = paste("Curvas de Sobrevivência por", variavel)
+  )
+  
+  print(p_surv)
+  
+  ggsave(paste0("plots/km",variavel,".pdf"),width = 158, height = 93, units = "mm")
+
+  # Testes estatísticos
+  cat("\nTeste Log-Rank (rho = 0):\n")
+  print(survdiff(formula_surv, data = df, rho = 0))
+
+  cat("\nTeste Wilcoxon (rho = 1):\n")
+  print(survdiff(formula_surv, data = df, rho = 1))
+}
+
+```
+
+
+```{r}
+surv_exploratoria <- function(df, variavel, tipo = c("numerica", "categorica"),
+                              metodo_discretizacao = "jenks", n_classes = 4,
+                              tempo = "LENFOL", censura = "FSTAT") {
+  
+  tipo <- match.arg(tipo)
+  v <- df[[variavel]]
+  
+  if (tipo == "numerica") {
+    breaks <- classIntervals(v, n = n_classes, style = metodo_discretizacao, intervalClosure = "left")$brks
+    df$grupo <- cut(v, breaks = breaks, include.lowest = TRUE)
+    cat("Intervalos criados:\n")
+    print(breaks)
+  } else {
+    df$grupo <- as.factor(v)
+    cat("Frequências e proporções:\n")
+    freq <- table(df$grupo)
+    print(cbind(Freq = freq, Prop = round(prop.table(freq), 3)))
+  }
+  
+  levels(df$grupo) <- gsub("^.*?:\\s*", "", levels(df$grupo))
+  
+  # Tabela de frequência
+  tab <- as.data.frame(table(df$grupo))
+  colnames(tab) <- c("Grupo", "Frequência")
+  tab$Proporção <- tab$Frequência / sum(tab$Frequência)
+  
+  # Gráfico de distribuição
+  if (tipo == "numerica") {
+    p_dist <- ggplot(df, aes(x = .data[[variavel]])) +
+      geom_histogram(fill = "#4B9CD3", color = "black", bins = 30, alpha = 0.8) +
+      labs(title = paste("Histograma de", variavel),
+           x = variavel, y = "Frequência") +
+      theme_minimal(base_size = 10)
+  } else {
+    p_dist <- ggplot(tab, aes(x = Grupo, y = Frequência, fill = Grupo)) +
+      geom_bar(stat = "identity", color = "black", alpha = 0.9) +
+      geom_text(aes(label = scales::percent(Proporção, accuracy = 0.1)), 
+                vjust = -0.4, size = 4.5) +
+      scale_fill_npg() +
+      labs(title = paste("Distribuição de", variavel),
+           y = "Frequência Absoluta", x = variavel, fill = NULL) +
+      theme_minimal(base_size = 10) +
+      theme(legend.position = "none") +
+      ylim(0, max(tab$Frequência) * 1.1)
+  }
+  
+  # Gráfico de tempo
+  if (tipo == "numerica") {
+    p_time <- ggplot(df, aes(x = .data[[variavel]], y = .data[[tempo]])) +
+      geom_point(color = "#E76F51", alpha = 0.6) +
+      geom_smooth(method = "loess", se = FALSE, color = "black", linetype = "dashed") +
+      labs(title = paste("Dispersão de", tempo, "por", variavel),
+           x = variavel, y = "Tempo") +
+      theme_minimal(base_size = 10)
+  } else {
+    p_time <- ggplot(df, aes(x = grupo, y = .data[[tempo]])) +
+      geom_boxplot(fill = "steelblue", alpha = 0.7, outlier.color = "black") +
+      labs(title = paste("Boxplot do tempo por", variavel),
+           x = variavel, y = "Tempo") +
+      theme_minimal(base_size = 10)
+  }
+  
+  # Curvas de sobrevivência
+  kms <- survfit(as.formula(paste0("Surv(", tempo, ",", censura, ") ~ grupo")), data = df)
+  names(kms$strata) <- gsub("^grupo=", "", names(kms$strata))
+  
+  p_surv <- ggsurvplot(
+    kms,
+    conf.int = FALSE,
+    pval = FALSE,
+    risk.table = FALSE,
+    legend.title = variavel,
+    palette = "npg",
+    xlab = "Tempo",
+    ylab = expression("S(t)"),
+    ggtheme = theme_minimal(base_size = 10),
+    title = paste("Curvas de Sobrevivência por", variavel)
+  )
+  
+  # Testes estatísticos
+  logrank <- survdiff(formula_surv, data = df, rho = 0)
+  wilcoxon <- survdiff(formula_surv, data = df, rho = 1)
+  
+  return(list(
+    tabela_frequencia = tab,
+    grafico_distribuicao = p_dist,
+    grafico_tempo = p_time,
+    grafico_sobrevivencia = p_surv$plot,
+    logrank_test = logrank,
+    wilcoxon_test = wilcoxon
+  ))
+}
+```
+
+
+### Idade (`AGE`)
+
+```{r}
+surv_exploratoria(dados, variavel = "AGE", tipo = "numerica")
+```
+
+### Gênero (`GENDER`)
+
+```{r}
+surv_exploratoria(dados, variavel = "GENDER", tipo = "categorica")
+```
+
+
+### Batimentos cardíacos (`HR`)
+
+```{r}
+surv_exploratoria(dados, variavel = "HR", tipo = "numerica") 
+```
+
+
+### Pressão sistólica (`SYSBP`)
+
+```{r}
+surv_exploratoria(dados, variavel = "SYSBP", tipo = "numerica") 
+```
+
+
+
+### Pressão diastólica (`DIASBP`)
+
+```{r}
+surv_exploratoria(dados, variavel = "DIASBP", tipo = "numerica") 
+```
+
+### Índice de massa corporal (`BMI`)
+
+```{r}
+surv_exploratoria(dados, variavel = "BMI", tipo = "numerica") 
+```
+
+### Histórico de doença cardiovascular (`CVD`)
+
+```{r}
+surv_exploratoria(dados, variavel = "CVD", tipo = "categorica") 
+```
+
+
+### Fibrilação arterial (`AFB`)
+
+```{r}
+surv_exploratoria(dados, variavel = "AFB", tipo = "categorica") 
+```
+
+### Choque cardiogênico (`SHO`)
+
+```{r}
+surv_exploratoria(dados, variavel = "SHO", tipo = "categorica") 
+```
+
+
+
+### Insuficiência cardíaca (`CHF`)
+
+```{r}
+surv_exploratoria(dados, variavel = "CHF", tipo = "categorica") 
+```
+
+
+
+### Bloqueio cardíaco completo (`AV3`)
+
+```{r}
+surv_exploratoria(dados, variavel = "AV3", tipo = "categorica") 
+```
+
+
+
+### Ordem do infarto (`MIORD`)
+
+```{r}
+surv_exploratoria(dados, variavel = "MIORD", tipo = "categorica") 
+```
+
+### Tipo do infarto (`MITYPE`)
+
+```{r}
+surv_exploratoria(dados, variavel = "MITYPE", tipo = "categorica") 
+```
+
+
+### Ano da coorte (`YEAR`)
+
+```{r}
+surv_exploratoria(dados, variavel = "YEAR", tipo = "categorica") 
+```
+
+```{r}
+variaveis <- c("AGE","GENDER","HR","SYSBP","DIASBP","BMI","CVD","AFB","SHO","CHF","AV3","MIORD","MITYPE")
+
+# Definir o tipo de cada variável
+tipos <- ifelse(variaveis %in% c("GENDER","CVD","AFB","SHO","CHF","AV3","MIORD","MITYPE"), "categorica", "numerica")
+
+# Executar a função e armazenar os resultados
+resultados_list <- mapply(
+  function(var, tipo) surv_exploratoria(df = dados, variavel = var, tipo = tipo),
+  variaveis[tipos=="categorica"], "categorica", SIMPLIFY = FALSE
+)
+```
+
+
+```{r}
+# Grid de distribuições
+plots_dist <- lapply(resultados_list, function(x) x$grafico_distribuicao)
+grid_dist <- marrangeGrob(plots_dist, nrow = 4, ncol = 2, top = "Distribuições")  # 3x3 por página
+ggsave("plots/grid_distribuicoes_cat.pdf", grid_dist, width = 15, height = 10)
+
+# Grid de boxplots
+plots_box <- lapply(resultados_list, function(x) x$grafico_tempo)
+grid_box <- marrangeGrob(plots_box, nrow = 4, ncol = 2, top = "Boxplots")
+ggsave("plots/grid_boxplots_cat.pdf", grid_box, width = 15, height = 10)
+
+# Grid de curvas de sobrevivência
+plots_surv <- lapply(resultados_list, function(x) x$grafico_sobrevivencia)
+grid_surv <- marrangeGrob(plots_surv, nrow = 4, ncol = 2, top = "Curvas de Sobrevivência")
+ggsave("plots/grid_sobrevivencia_cat.pdf", grid_surv, width = 15, height = 10)
+
+```
+
+```{r}
+variaveis <- c("AGE","GENDER","HR","SYSBP","DIASBP","BMI","CVD","AFB","SHO","CHF","AV3","MIORD","MITYPE")
+
+# Definir o tipo de cada variável
+tipos <- ifelse(variaveis %in% c("GENDER","CVD","AFB","SHO","CHF","AV3","MIORD","MITYPE"), "categorica", "numerica")
+
+# Executar a função e armazenar os resultados
+resultados_list <- mapply(
+  function(var, tipo) surv_exploratoria(df = dados, variavel = var, tipo = tipo),
+  variaveis[tipos=="numerica"], "numerica", SIMPLIFY = FALSE
+)
+```
+
+
+```{r}
+# Grid de distribuições
+plots_dist <- lapply(resultados_list, function(x) x$grafico_distribuicao)
+grid_dist <- marrangeGrob(plots_dist, nrow = 3, ncol = 2, top = "Distribuições")  # 3x3 por página
+ggsave("plots/grid_distribuicoes_num.pdf", grid_dist, width = 15, height = 10)
+
+# Grid de boxplots
+plots_box <- lapply(resultados_list, function(x) x$grafico_tempo)
+grid_box <- marrangeGrob(plots_box, nrow = 3, ncol = 2, top = "Scatter plots")
+ggsave("plots/grid_boxplots_num.pdf", grid_box, width = 15, height = 10)
+
+# Grid de curvas de sobrevivência
+plots_surv <- lapply(resultados_list, function(x) x$grafico_sobrevivencia)
+grid_surv <- marrangeGrob(plots_surv, nrow = 3, ncol = 2, top = "Curvas de Sobrevivência")
+ggsave("plots/grid_sobrevivencia_num.pdf", grid_surv, width = 15, height = 10)
+
+```
+
+
+
+## Verificação da distribuição
+
+```{r}
+# Ajustar modelos
+fit_exp <- flexsurvreg(Surv(LENFOL, FSTAT) ~ 1, data = dados, dist = "exp")
+fit_wei <- flexsurvreg(Surv(LENFOL, FSTAT) ~ 1, data = dados, dist = "weibull")
+fit_lnorm <- flexsurvreg(Surv(LENFOL, FSTAT) ~ 1, data = dados, dist = "lnorm")
+```
+
+```{r}
+# Criar data.frame com sobrevivência estimada
+tempo_seq <- seq(0, max(dados$LENFOL), length.out = 100)
+df_param <- data.frame(
+  tempo = rep(tempo_seq, 3),
+  surv = c(summary(fit_exp, t = tempo_seq)[[1]]$est,
+           summary(fit_wei, t = tempo_seq)[[1]]$est,
+           summary(fit_lnorm, t = tempo_seq)[[1]]$est),
+  modelo = rep(c("Exponencial", "Weibull", "Log-Normal"), each = length(tempo_seq))
+)
+
+# Plot final com cores NPG
+km_plot$plot +
+  geom_line(data = df_param, aes(x = tempo, y = surv, color = modelo), size = 1) +
+  scale_color_npg(name = "Modelo") +
+  labs(title = "Kaplan-Meier + Ajustes Paramétricos",
+       y = "Sobrevivência", x = "Tempo") +
+  theme_minimal()
+```
+
+```{r}
+# Número de observações
+n <- nrow(dados)
+
+# Calcular BIC manualmente
+bic_manual <- function(fit) {
+  -2 * logLik(fit)[1] + length(coef(fit)) * log(n)
+}
+
+data.frame(
+  Modelo = c("Exponencial", "Weibull", "Log-Normal"),
+  BIC = c(bic_manual(fit_exp), bic_manual(fit_wei), bic_manual(fit_lnorm)),
+  AIC = c(AIC(fit_exp), AIC(fit_wei), AIC(fit_lnorm))
+)
+```
+
+
+### Ajuste do lognormal
+```{r}
+# Ajuste do modelo lognormal paramétrico
+fit_lognormal <- survreg(Surv(LENFOL, FSTAT) ~ 1, data = dados, dist = "lognormal")
+summary(fit_lognormal)
+```
+
+
+```{r}
+# Obter parâmetros do modelo
+mu <- fit_lognormal$coefficients
+sigma <- fit_lognormal$scale
+
+# Calcular função de sobrevivência estimada para cada tempo observado
+S_hat <- plnorm(dados$LENFOL, meanlog = mu, sdlog = sigma, lower.tail = FALSE)
+
+# Calcular resíduos de Cox-Snell como -log(S(t))
+res_coxsnell <- -log(S_hat)
+
+# Ajustar curva de sobrevivência aos resíduos
+fit_res <- survfit(Surv(res_coxsnell, FSTAT) ~ 1, data = dados)
+
+# Plotar
+
+ggsurvplot(fit_res,
+           conf.int = TRUE,
+           ggtheme = theme_minimal(),
+           title = "Resíduos de Cox-Snell (sem truncamento)",
+           risk.table = FALSE)
+
+```
+
+
+```{r}
+# Obter risco cumulativo estimado no tempo observado
+H_hat <- -log(summary(fit_lnorm, t = dados$LENFOL)[[1]]$est)
+
+# Resíduos de Cox-Snell
+resid_coxsnell <- H_hat
+
+# Novo objeto de sobrevivência com os resíduos
+surv_resid <- survfit(Surv(resid_coxsnell, dados$FSTAT) ~ 1)
+
+# Criar curva teórica S(r) = exp(-r)
+r_seq <- seq(0, max(resid_coxsnell), length.out = 100)
+df_exp <- data.frame(x = r_seq, y = exp(-r_seq))
+
+# Adicionar ao gráfico
+ggsurvplot(surv_resid,
+           conf.int = FALSE,
+           risk.table = FALSE,
+           data = dados,
+           ggtheme = theme_minimal(),
+           title = "Resíduos de Cox-Snell",
+           xlab = "Resíduo de Cox-Snell",
+           ylab = "Sobrevivência estimada")$plot +
+  geom_line(data = df_exp, aes(x = x, y = y), color = "red", linetype = "dashed") +
+  labs(subtitle = "Linha vermelha: curva esperada S(r) = exp(-r)")
+```
+
+
+
+### Com fração de cura
+```{r}
+fit_cure <- flexsurvcure(Surv(LENFOL, FSTAT) ~ HR, data = dados,
+                         dist = "lnorm", link = "logistic", mixture = TRUE)
+summary(fit_cure)
+```
+
+
+```{r}
+dados_filtrados = dados %>% filter(LENFOL <= 2200)
+
+fit_cure_filtrada <- flexsurvcure(Surv(LENFOL, FSTAT) ~ 1, data = dados_filtrados,
+                         dist = "lnorm", link = "logistic", mixture = TRUE)
+summary(fit_cure_filtrada)
+```
+
+### Testando modelo de regressão e stepwise
+
+```{r}
+dados_filtrados = dados %>% filter(LENFOL <= 2200)
+
+fit_cure_filtrada <- flexsurvcure(Surv(LENFOL, FSTAT) ~ AGE + GENDER + HR + SYSBP + DIASBP + BMI + CVD + AFB + SHO + CHF + AV3 + MIORD  + MITYPE, data = dados_filtrados,
+                         dist = "lnorm", link = "logistic", mixture = FALSE)
+summary(fit_cure_filtrada)
+```
+
+
+```{r}
+# Obter parâmetros do modelo
+mu <- fit_cure$coefficients[2]
+sigma <- fit_cure$coefficients[3]
+
+# Calcular função de sobrevivência estimada para cada tempo observado
+S_hat <- plnorm(dados$LENFOL, meanlog = mu, sdlog = sigma, lower.tail = FALSE)
+
+# Calcular resíduos de Cox-Snell como -log(S(t))
+res_coxsnell <- -log(S_hat)
+
+# Ajustar curva de sobrevivência aos resíduos
+fit_res <- survfit(Surv(res_coxsnell, FSTAT) ~ 1, data = dados)
+
+# Plotar
+ggsurvplot(fit_res,
+           conf.int = TRUE,
+           ggtheme = theme_minimal(),
+           title = "Resíduos de Cox-Snell (com fração de cura)",
+           risk.table = FALSE)
+
+```
+```{r}
+tempo_seq <- seq(0, max(dados$LENFOL), length.out = 200)
+
+# Sobrevivência ajustada
+pred_cure <- summary(fit_cure, t = tempo_seq, type = "survival")
+S_cure <- pred_cure[[1]]$est
+```
+
+
+```{r}
+# Data frame da curva ajustada
+df_cure <- data.frame(
+  tempo = tempo_seq,
+  sobrevivencia = S_cure
+)
+
+# Plotar curva de Kaplan-Meier
+km_plot <- ggsurvplot(km_fit, 
+                      conf.int = FALSE,
+                      risk.table = FALSE,
+                      ggtheme = theme_minimal(),
+                      palette = "blue",
+                      legend = "bottom",
+                      legend.title = "Modelo",
+                      legend.labs = c("Kaplan-Meier"))
+
+# Adicionar curva do modelo de fração de cura
+km_plot$plot +
+  geom_line(data = df_cure, aes(x = tempo, y = sobrevivencia), 
+            color = "red", linetype = "dashed", size = 1) +
+  labs(title = "Kaplan-Meier vs. Modelo com Fração de Cura (Lognormal)",
+       x = "Tempo", y = "Sobrevivência")
+```
+```{r}
+# Criar data.frame com sobrevivência estimada
+tempo_seq <- seq(0, max(dados$LENFOL), length.out = 100)
+df_param <- data.frame(
+  tempo = rep(tempo_seq, 2),
+  surv = c(summary(fit_cure, t = tempo_seq)[[1]]$est,
+           summary(fit_lnorm, t = tempo_seq)[[1]]$est),
+  modelo = rep(c("Log Normal", "Log Normal com cura"), each = length(tempo_seq))
+)
+
+# Plot final com cores NPG
+km_plot$plot +
+  geom_line(data = df_param, aes(x = tempo, y = surv, color = modelo), size = 1) +
+  scale_color_npg(name = "Modelo") +
+  labs(title = "Kaplan-Meier + Ajustes Paramétricos",
+       y = "Sobrevivência", x = "Tempo") +
+  theme_minimal()
+```
+
+```{r}
+AIC(fit_cure, fit_lognormal)
+```
+
+## Ajuste na mão aa
+
+```{r}
+VERO_lnorm_cura <- function(params){
+  phi = 1 / (1 + exp(-params[1]))  # fração de cura entre 0 e 1
+  alpha = params[2]                 # meanlog real
+  gamma = exp(params[3])            # sdlog > 0
+  
+  tempos = dados$LENFOL
+  delta = dados$FSTAT
+  
+  ft = dlnorm(tempos, meanlog = alpha, sdlog = gamma)
+  St = plnorm(tempos, meanlog = alpha, sdlog = gamma, lower.tail = FALSE)
+  
+  eps <- 1e-10  # para estabilidade numérica
+  loglik = delta * log((1 - phi) * ft + eps) + (1 - delta) * log(phi + (1 - phi) * St + eps)
+  
+  return(-sum(loglik))
+}
+```
+
+
+```{r}
+init_params = c(0.1,7,2)
+
+res <- optim(par = init_params,
+             fn = VERO_lnorm_cura,
+             method = "BFGS",
+             hessian = TRUE)
+  
+
+
+res$par
+```
+```{r}
+fit_cure$coefficients
+```
+
+```{r}
+(alpha_hat = res$par[1])
+(gamma_hat = exp(res$par[2]))
+(phi_hat = 1 / (1 + exp(-res$par[3])))
+```
+
+##  Testando em diferentes cortes
+
+```{r}
+fit_1 = survreg(Surv(LENFOL, FSTAT) ~ AGE + GENDER + HR + SYSBP + DIASBP + BMI + CVD + AFB + SHO + CHF + AV3 + MIORD  + MITYPE, data = dados %>% filter(YEAR == 1), dist = "lognorm")
+
+fit_2 = survreg(Surv(LENFOL, FSTAT) ~ AGE + GENDER + HR + SYSBP + DIASBP + BMI + CVD + AFB + SHO + CHF + AV3 + MIORD  + MITYPE, data = dados %>% filter(YEAR == 2), dist = "lognorm")
+
+fit_3 = survreg(Surv(LENFOL, FSTAT) ~ AGE + GENDER + HR + SYSBP + DIASBP + BMI + CVD + AFB + SHO + CHF + AV3 + MIORD  + MITYPE, data = dados %>% filter(YEAR == 3), dist = "lognorm")
+```
+
+```{r}
+mod_step1 = step(fit_1, direction = "both")
+```
+```{r}
+mod_step2 = step(fit_2, direction = "backward")
+```
+```{r}
+mod_step3 = step(fit_3, direction = "backward")
+```
+
+```{r}
+summary(mod_step1)
+```
+
+```{r}
+summary(mod_step3)
+```
+
+```{r}
+km_fit  <- survfit(Surv(LENFOL, FSTAT) ~ 1, data = dados %>% filter(YEAR == 1))
+
+km_plot <- ggsurvplot(km_fit, 
+                      conf.int = FALSE,
+                      risk.table = FALSE,
+                      ggtheme = theme_minimal(),
+                      palette = "blue",
+                      legend = "bottom",
+                      legend.title = "Modelo",
+                      legend.labs = c("Kaplan-Meier"))
+
+# Ajustar modelos
+fit_exp <- flexsurvreg(Surv(LENFOL, FSTAT) ~ 1, data = dados %>% filter(YEAR == 1), dist = "exp")
+fit_wei <- flexsurvreg(Surv(LENFOL, FSTAT) ~ 1, data = dados %>% filter(YEAR == 1), dist = "weibull")
+fit_lnorm <- flexsurvreg(Surv(LENFOL, FSTAT) ~ 1, data = dados %>% filter(YEAR == 1), dist = "lnorm")
+```
+
+```{r}
+
+
+# Criar data.frame com sobrevivência estimada
+tempo_seq <- seq(0, max(dados$LENFOL[dados$YEAR==1]), length.out = 100)
+df_param <- data.frame(
+  tempo = rep(tempo_seq, 3),
+  surv = c(summary(fit_exp, t = tempo_seq)[[1]]$est,
+           summary(fit_wei, t = tempo_seq)[[1]]$est,
+           summary(fit_lnorm, t = tempo_seq)[[1]]$est),
+  modelo = rep(c("Exponencial", "Weibull", "Log-Normal"), each = length(tempo_seq))
+)
+
+# Plot final com cores NPG
+km_plot$plot +
+  geom_line(data = df_param, aes(x = tempo, y = surv, color = modelo), size = 1) +
+  scale_color_npg(name = "Modelo") +
+  labs(title = "Kaplan-Meier + Ajustes Paramétricos",
+       y = "Sobrevivência", x = "Tempo") +
+  theme_minimal()
+```
+
+```{r}
+km_fit  <- survfit(Surv(LENFOL, FSTAT) ~ 1, data = dados %>% filter(YEAR == 2))
+
+km_plot <- ggsurvplot(km_fit, 
+                      conf.int = FALSE,
+                      risk.table = FALSE,
+                      ggtheme = theme_minimal(),
+                      palette = "blue",
+                      legend = "bottom",
+                      legend.title = "Modelo",
+                      legend.labs = c("Kaplan-Meier"))
+
+# Ajustar modelos
+fit_exp <- flexsurvreg(Surv(LENFOL, FSTAT) ~ 1, data = dados %>% filter(YEAR == 2), dist = "exp")
+fit_wei <- flexsurvreg(Surv(LENFOL, FSTAT) ~ 1, data = dados %>% filter(YEAR == 2), dist = "weibull")
+fit_lnorm <- flexsurvreg(Surv(LENFOL, FSTAT) ~ 1, data = dados %>% filter(YEAR == 2), dist = "lnorm")
+```
+
+```{r}
+# Criar data.frame com sobrevivência estimada
+tempo_seq <- seq(0, max(dados$LENFOL[dados$YEAR==2]), length.out = 100)
+df_param <- data.frame(
+  tempo = rep(tempo_seq, 3),
+  surv = c(summary(fit_exp, t = tempo_seq)[[1]]$est,
+           summary(fit_wei, t = tempo_seq)[[1]]$est,
+           summary(fit_lnorm, t = tempo_seq)[[1]]$est),
+  modelo = rep(c("Exponencial", "Weibull", "Log-Normal"), each = length(tempo_seq))
+)
+
+# Plot final com cores NPG
+km_plot$plot +
+  geom_line(data = df_param, aes(x = tempo, y = surv, color = modelo), size = 1) +
+  scale_color_npg(name = "Modelo") +
+  labs(title = "Kaplan-Meier + Ajustes Paramétricos",
+       y = "Sobrevivência", x = "Tempo") +
+  theme_minimal()
+```
+
+```{r}
+km_fit  <- survfit(Surv(LENFOL, FSTAT) ~ 1, data = dados %>% filter(YEAR == 3))
+
+km_plot <- ggsurvplot(km_fit, 
+                      conf.int = FALSE,
+                      risk.table = FALSE,
+                      ggtheme = theme_minimal(),
+                      palette = "blue",
+                      legend = "bottom",
+                      legend.title = "Modelo",
+                      legend.labs = c("Kaplan-Meier"))
+
+# Ajustar modelos
+fit_exp <- flexsurvreg(Surv(LENFOL, FSTAT) ~ 1, data = dados %>% filter(YEAR == 3), dist = "exp")
+fit_wei <- flexsurvreg(Surv(LENFOL, FSTAT) ~ 1, data = dados %>% filter(YEAR == 3), dist = "weibull")
+fit_lnorm <- flexsurvreg(Surv(LENFOL, FSTAT) ~ 1, data = dados %>% filter(YEAR == 3), dist = "lnorm")
+```
+
+```{r}
+# Criar data.frame com sobrevivência estimada
+tempo_seq <- seq(0, max(dados$LENFOL[dados$YEAR==3]), length.out = 100)
+df_param <- data.frame(
+  tempo = rep(tempo_seq, 3),
+  surv = c(summary(fit_exp, t = tempo_seq)[[1]]$est,
+           summary(fit_wei, t = tempo_seq)[[1]]$est,
+           summary(fit_lnorm, t = tempo_seq)[[1]]$est),
+  modelo = rep(c("Exponencial", "Weibull", "Log-Normal"), each = length(tempo_seq))
+)
+
+# Plot final com cores NPG
+km_plot$plot +
+  geom_line(data = df_param, aes(x = tempo, y = surv, color = modelo), size = 1) +
+  scale_color_npg(name = "Modelo") +
+  labs(title = "Kaplan-Meier + Ajustes Paramétricos",
+       y = "Sobrevivência", x = "Tempo") +
+  theme_minimal()
+```
